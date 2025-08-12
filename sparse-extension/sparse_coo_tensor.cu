@@ -5,7 +5,7 @@
 #include <ATen/SparseTensorImpl.h>
 #include <ATen/NativeFunctions.h>
 #include <ATen/InitialTensorOptions.h>
-#include <ATen/SparseTensorUtils.h>
+#include <ATen/native/SparseTensorUtils.h>
 
 #include "cusparse.h"
 
@@ -147,8 +147,8 @@ void spmm_gpu(const at::Tensor& A_rowindices,
     int32_t c_row = C.size(0);
     int32_t c_col = C.size(1);
 
-    float alpha = 1;
-    float beta = 1;
+    double alpha = 1;
+    double beta = 1;
     cusparseSpMatDescr_t matA;
     CHECK_CUSPARSE(cusparseCreateCsr(&matA,
 					  n, 		// rows
@@ -156,19 +156,19 @@ void spmm_gpu(const at::Tensor& A_rowindices,
 					  nnz, 		// nnz
 					  d_a_csrrows, 	// csrRowOffsets
 					  A_colindices.data<int>(), // csrColInd
-					  A_values.data<float>(),   // csrValues
+					  A_values.data<double>(),   // csrValues
 					  CUSPARSE_INDEX_32I, 	    // csrRowOffsetsType
 					  CUSPARSE_INDEX_32I, 	    // csrColIndType
 					  CUSPARSE_INDEX_BASE_ZERO, // idxBase,
-					  CUDA_R_32F)); 	    // valueType
+					  CUDA_R_64F)); 	    // valueType
 
     cusparseDnMatDescr_t matB;
     CHECK_CUSPARSE(cusparseCreateDnMat(&matB, 
                                             b_col, // rows
                                             b_row, // cols
                                             b_col, // ld
-                                            B.data<float>(), // values
-                                            CUDA_R_32F,      // valueType
+                                            B.data<double>(), // values
+                                            CUDA_R_64F,      // valueType
                                             CUSPARSE_ORDER_COL)); // order
         
     // Row-major to column-major
@@ -181,8 +181,8 @@ void spmm_gpu(const at::Tensor& A_rowindices,
                                             n, // rows
                                             b_col, // cols
                                             n, // ld
-                                            C.data<float>(), // values
-                                            CUDA_R_32F,      // valueType
+                                            C.data<double>(), // values
+                                            CUDA_R_64F,      // valueType
                                             CUSPARSE_ORDER_COL)); // order
 	
     size_t bufferSize;
@@ -194,8 +194,8 @@ void spmm_gpu(const at::Tensor& A_rowindices,
                                                 matB,                               // matB
                                                 &beta,                              // beta
                                                 matC,                               // matC
-                                                CUDA_R_32F,                         // computeType
-                                                CUSPARSE_CSRMM_ALG1,                // alg
+                                                CUDA_R_64F,                         // computeType
+                                                CUSPARSE_SPMM_ALG_DEFAULT,          // alg
                                                 &bufferSize));                      // bufferSize
 
 
@@ -210,8 +210,8 @@ void spmm_gpu(const at::Tensor& A_rowindices,
                                     matB,                               // matB
                                     &beta,                              // beta
                                     matC,                               // matC
-                                    CUDA_R_32F,                         // computeType
-                                    CUSPARSE_CSRMM_ALG1,                // alg
+                                    CUDA_R_64F,                         // computeType
+                                    CUSPARSE_SPMM_ALG_DEFAULT,          // alg
                                     d_buffer));                         // buffer
 
 
