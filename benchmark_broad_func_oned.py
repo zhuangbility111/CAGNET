@@ -212,7 +212,11 @@ def setup_distributed():
     world_size = int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", "0"))
     
+    # Get hostname to identify the node
+    hostname = socket.gethostname()
+    
     print(f"OpenMPI Info - Rank: {rank}, World Size: {world_size}, Local Rank: {local_rank}")
+    print(f"Process Location - Host: {hostname}, GPU: {local_rank}")
     
     # Set environment variables for PyTorch distributed
     os.environ["RANK"] = str(rank)
@@ -238,7 +242,7 @@ def setup_distributed():
     # Bind to local GPU
     torch.cuda.set_device(local_rank)
     
-    print(f"Rank {rank} bound to GPU {local_rank}")
+    print(f"Rank {rank} bound to GPU {local_rank} on {hostname}")
     
     return rank, world_size, local_rank
 
