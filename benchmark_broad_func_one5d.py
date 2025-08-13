@@ -26,7 +26,7 @@ except ImportError:
     exit(1)
 
 # Reuse functions from benchmark_broad_func_oned.py to avoid duplication
-from benchmark_broad_func_oned import stop_time, split_coo, load_npz_file, setup_distributed
+from benchmark_broad_func_oned import stop_time, split_coo, load_npz_file, setup_distributed, compute_full_reference_spmm, extract_local_partition, verify_distributed_result
 
 # Extracted broad_func_one5d function - exact copy from original
 def broad_func_one5d(gcn_instance, graph, ampbyp, inputs):
@@ -186,12 +186,17 @@ def one5d_partition(rank, size, inputs, adj_matrix, data, features, classes, rep
 
     inputs = inputs.to(torch.device("cpu"))
     adj_matrix = adj_matrix.to(torch.device("cpu"))
+    
+    # Swap rows of adj_matrix (swap row indices and column indices)
+    # adj_matrix is in format [2, nnz], swap the two rows
+    adj_matrix_swapped = torch.stack([adj_matrix[1], adj_matrix[0]], dim=0)
+    print(f"rank: {rank} adj_matrix rows swapped for partition processing", flush=True)
 
     rank_c = rank // replication
     # Compute the adj_matrix and inputs partitions for this process
     with torch.no_grad():
-        # Column partitions
-        am_partitions, vtx_indices = split_coo(adj_matrix, partitions, 1)
+        # Column partitions - now using row-swapped adj_matrix
+        am_partitions, vtx_indices = split_coo(adj_matrix_swapped, partitions, 1)
         print(vtx_indices)
         print(rank_c)
         proc_node_count = vtx_indices[rank_c + 1] - vtx_indices[rank_c]
@@ -313,7 +318,9 @@ def benchmark_broad_func_one5d(args):
     
     # Create input features with fp64 precision
     num_features = args.num_features
+    torch.manual_seed(1233)
     inputs = torch.randn(num_nodes, num_features, dtype=torch.float64)
+    # inputs = torch.ones(num_nodes, num_features, dtype=torch.float64)
     
     print(f"Input features shape: {inputs.shape}")
     
@@ -420,6 +427,35 @@ def benchmark_broad_func_one5d(args):
         for key, value in gcn_instance["timings"].items():
             print(f"  {key}: {value:.4f}s ({value/args.num_runs:.4f}s avg)")
     
+    # Verify distributed result against reference computation (1.5D specific)
+    if args.verify_result and args.distributed:
+        print(f"\n=== Verifying Local 1.5D Distributed Results (Rank {rank}) ===")
+        try:
+            # Each rank computes the full reference result using the original edge_index format
+            full_reference_result = compute_full_reference_spmm(edge_index, num_nodes, inputs, device)
+            
+            # For 1.5D, we need to consider the replication factor
+            # Extract the local partition that this rank should compute
+            # Note: 1.5D partitioning may be more complex than simple row partitioning
+            expected_local_result = extract_local_partition(full_reference_result, rank_c, proc_row)
+            
+            # Verify the local result (z_loc) against expected local result
+            is_correct, max_diff, rel_diff = verify_distributed_result(
+                result, expected_local_result, rank
+            )
+            
+            if is_correct:
+                print(f"🎉 Rank {rank}: Local 1.5D distributed computation is CORRECT!")
+            else:
+                print(f"⚠️  Rank {rank}: Local 1.5D distributed computation has discrepancies!")
+            
+        except Exception as e:
+            print(f"❌ Rank {rank}: 1.5D Verification failed with error: {e}")
+            import traceback
+            traceback.print_exc()
+    elif args.verify_result and not args.distributed:
+        print("⚠️  Verification only available in distributed mode")
+    
     if args.distributed:
         dist.destroy_process_group()
 
@@ -450,6 +486,8 @@ def main():
                        help='Number of benchmark runs')
     parser.add_argument('--warmup', type=int, default=5, 
                        help='Number of warmup runs')
+    parser.add_argument('--verify-result', action='store_true',
+                       help='Verify distributed result against reference computation')
     
     args = parser.parse_args()
     
@@ -461,6 +499,7 @@ def main():
     print(f"  Replication: {args.replication}")
     print(f"  Mode: {'Sparse-unaware' if args.sparse_unaware else 'Sparse-aware'}")
     print(f"  Runs: {args.num_runs}, Warmup: {args.warmup}")
+    print(f"  Verify result: {args.verify_result}")
     print(f"  Data precision: fp64")
     
     benchmark_broad_func_one5d(args)

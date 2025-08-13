@@ -139,12 +139,17 @@ def oned_partition(rank, size, inputs, adj_matrix, data, features, classes, devi
 
     inputs = inputs.to(torch.device("cpu"))
     adj_matrix = adj_matrix.to(torch.device("cpu"))
+    
+    # Swap rows of adj_matrix (swap row indices and column indices)
+    # adj_matrix is in format [2, nnz], swap the two rows
+    adj_matrix_swapped = torch.stack([adj_matrix[1], adj_matrix[0]], dim=0)
+    print(f"rank: {rank} adj_matrix rows swapped for partition processing", flush=True)
 
     # Compute the adj_matrix and inputs partitions for this process
     # TODO: Maybe I do want grad here. Unsure.
     with torch.no_grad():
-        # Column partitions
-        am_partitions, vtx_indices = split_coo(adj_matrix, partitions, 1)
+        # Column partitions - now using row-swapped adj_matrix
+        am_partitions, vtx_indices = split_coo(adj_matrix_swapped, partitions, 1)
 
         proc_node_count = vtx_indices[rank + 1] - vtx_indices[rank]
         am_pbyp, _ = split_coo(am_partitions[rank], partitions, 0)
@@ -246,6 +251,85 @@ def setup_distributed():
     
     return rank, world_size, local_rank
 
+def compute_full_reference_spmm(edge_index, num_nodes, inputs, device):
+    """Compute full reference SpMM result for verification"""
+    print("Computing full reference SpMM result...")
+    
+    # Create adjacency matrix from edge_index
+    adj_matrix = torch.sparse_coo_tensor(
+        edge_index, 
+        torch.ones(edge_index.size(1), dtype=torch.float64),
+        size=(num_nodes, num_nodes),
+        device=device
+    ).coalesce()
+    
+    # Perform SpMM: A @ X
+    reference_result = torch.sparse.mm(adj_matrix, inputs.to(device))
+    
+    print(f"Full reference result shape: {reference_result.shape}")
+    print(f"Full reference result norm: {torch.norm(reference_result).item():.6f}")
+    
+    return reference_result
+
+def extract_local_partition(full_result, rank, size):
+    """Extract the local partition from full result based on 1D partitioning"""
+    num_nodes = full_result.size(0)
+    n_per_proc = math.ceil(float(num_nodes) / size)
+    
+    start_idx = rank * n_per_proc
+    end_idx = min((rank + 1) * n_per_proc, num_nodes)
+    
+    local_partition = full_result[start_idx:end_idx, :]
+    print(f"Rank {dist.get_rank()}: extracted partition [{start_idx}:{end_idx}] from full result")
+
+    return local_partition
+
+def verify_distributed_result(distributed_result, reference_result, rank, tolerance=1e-6):
+    """Verify distributed computation result against reference"""
+    print(f"Verifying distributed result on rank {rank}...")
+    
+    # Move to CPU for comparison if needed
+    if distributed_result.is_cuda:
+        distributed_cpu = distributed_result.cpu()
+    else:
+        distributed_cpu = distributed_result
+        
+    if reference_result.is_cuda:
+        reference_cpu = reference_result.cpu()
+    else:
+        reference_cpu = reference_result
+    
+    # Compute differences
+    abs_diff = torch.abs(distributed_cpu - reference_cpu)
+    max_abs_diff = torch.max(abs_diff).item()
+    mean_abs_diff = torch.mean(abs_diff).item()
+    
+    # Compute relative differences
+    reference_norm = torch.norm(reference_cpu).item()
+    distributed_norm = torch.norm(distributed_cpu).item()
+    rel_diff = abs(distributed_norm - reference_norm) / (reference_norm + 1e-12)
+    
+    print(f"Verification results for rank {rank}:")
+    print(f"  Distributed result norm: {distributed_norm:.6f}")
+    print(f"  Reference result norm: {reference_norm:.6f}")
+    print(f"  Max absolute difference: {max_abs_diff:.2e}")
+    print(f"  Mean absolute difference: {mean_abs_diff:.2e}")
+    print(f"  Relative norm difference: {rel_diff:.2e}")
+    
+    # Check if results match within tolerance
+    is_correct = max_abs_diff < tolerance and rel_diff < tolerance
+    
+    if is_correct:
+        print(f"✅ Rank {rank}: Results match within tolerance ({tolerance:.0e})")
+    else:
+        print(f"❌ Rank {rank}: Results do NOT match (tolerance: {tolerance:.0e})")
+        if max_abs_diff >= tolerance:
+            print(f"   Max abs diff {max_abs_diff:.2e} >= {tolerance:.0e}")
+        if rel_diff >= tolerance:
+            print(f"   Rel norm diff {rel_diff:.2e} >= {tolerance:.0e}")
+    
+    return is_correct, max_abs_diff, rel_diff
+
 def benchmark_broad_func_oned(args):
     """Main benchmarking function"""
     
@@ -283,7 +367,9 @@ def benchmark_broad_func_oned(args):
     
     # Create input features with fp64 precision
     num_features = args.num_features
+    torch.manual_seed(1)
     inputs = torch.randn(num_nodes, num_features, dtype=torch.float64)
+    # inputs = torch.ones(num_nodes, num_features, dtype=torch.float64)
     
     print(f"Input features shape: {inputs.shape}")
     
@@ -380,6 +466,33 @@ def benchmark_broad_func_oned(args):
         for key, value in gcn_instance["timings"].items():
             print(f"  {key}: {value:.4f}s ({value/args.num_runs:.4f}s avg)")
     
+    # Verify distributed result against reference computation
+    if args.verify_result and args.distributed:
+        print(f"\n=== Verifying Local Distributed Results (Rank {rank}) ===")
+        try:
+            # Each rank computes the full reference result using the original edge_index format
+            full_reference_result = compute_full_reference_spmm(edge_index, num_nodes, inputs, device)
+            
+            # Extract the local partition that this rank should compute
+            expected_local_result = extract_local_partition(full_reference_result, rank, size)
+            
+            # Verify the local distributed result (z_loc) against expected local result
+            is_correct, max_diff, rel_diff = verify_distributed_result(
+                result, expected_local_result, rank
+            )
+            
+            if is_correct:
+                print(f"🎉 Rank {rank}: Local distributed computation is CORRECT!")
+            else:
+                print(f"⚠️  Rank {rank}: Local distributed computation has discrepancies!")
+                
+        except Exception as e:
+            print(f"❌ Rank {rank}: Verification failed with error: {e}")
+            import traceback
+            traceback.print_exc()
+    elif args.verify_result and not args.distributed:
+        print("⚠️  Verification only available in distributed mode")
+    
     if args.distributed:
         dist.destroy_process_group()
 
@@ -410,6 +523,8 @@ def main():
                        help='Number of benchmark runs')
     parser.add_argument('--warmup', type=int, default=5, 
                        help='Number of warmup runs')
+    parser.add_argument('--verify-result', action='store_true',
+                       help='Verify distributed result against reference computation')
     
     args = parser.parse_args()
     
@@ -420,6 +535,7 @@ def main():
     print(f"  Distributed: {args.distributed}")
     print(f"  Mode: {'Sparse-unaware' if args.sparse_unaware else 'Sparse-aware'}")
     print(f"  Runs: {args.num_runs}, Warmup: {args.warmup}")
+    print(f"  Verify result: {args.verify_result}")
     print(f"  Data precision: fp64")
     
     benchmark_broad_func_oned(args)
