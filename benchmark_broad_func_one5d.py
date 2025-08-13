@@ -214,7 +214,7 @@ def one5d_partition(rank, size, inputs, adj_matrix, data, features, classes, rep
                                                         requires_grad=False)
                 # scale_elements removed
 
-        print("rank: {}, am_pbyp size: {}".format(rank, [x.size() for x in am_pbyp]), flush=True)
+        # print("rank: {}, am_pbyp size: {}".format(rank, [x.size() for x in am_pbyp]), flush=True)
 
         for i in range(len(am_partitions)):
             proc_node_count = vtx_indices[i + 1] - vtx_indices[i]

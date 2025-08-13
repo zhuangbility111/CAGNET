@@ -143,7 +143,7 @@ def oned_partition(rank, size, inputs, adj_matrix, data, features, classes, devi
     # Swap rows of adj_matrix (swap row indices and column indices)
     # adj_matrix is in format [2, nnz], swap the two rows
     adj_matrix_swapped = torch.stack([adj_matrix[1], adj_matrix[0]], dim=0)
-    print(f"rank: {rank} adj_matrix rows swapped for partition processing", flush=True)
+    # print(f"rank: {rank} adj_matrix rows swapped for partition processing", flush=True)
 
     # Compute the adj_matrix and inputs partitions for this process
     # TODO: Maybe I do want grad here. Unsure.
@@ -165,7 +165,7 @@ def oned_partition(rank, size, inputs, adj_matrix, data, features, classes, devi
                                                         size=(vtx_indices[i + 1] - vtx_indices[i], proc_node_count),
                                                         requires_grad=False)
                 # scale_elements removed
-            print("rank: {}, am_pbyp[{}].size: {}".format(rank, i, am_pbyp[i].size()), flush=True)
+            # print("rank: {}, am_pbyp[{}].size: {}".format(rank, i, am_pbyp[i].size()), flush=True)
 
         for i in range(len(am_partitions)):
             proc_node_count = vtx_indices[i + 1] - vtx_indices[i]
