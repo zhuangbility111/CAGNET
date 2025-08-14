@@ -80,8 +80,10 @@ def broad_func_oned(gcn_instance, graph, ampbyp, inputs):
     z_loc = torch.cuda.DoubleTensor(ampbyp[0].size(0), inputs.size(1), device=gcn_instance["device"]).fill_(0)
     
     row_indices_send = gcn_instance["row_indices_send"]
+    # row_indices_send[gcn_instance["rank"]] = torch.cuda.LongTensor(0, device=gcn_instance["device"]).fill_(0)
     row_data_send = [torch.cuda.DoubleTensor(device=gcn_instance["device"])]*gcn_instance["size"]
     row_indices_recv = gcn_instance["row_indices_recv"]
+    # row_indices_recv[gcn_instance["rank"]] = torch.cuda.LongTensor(0, device=gcn_instance["device"]).fill_(0)
     row_data_recv = [torch.cuda.DoubleTensor(device=gcn_instance["device"]).resize_(row_indices_send[i].size(0), inputs.size(1)).fill_(0) for i in range(gcn_instance["size"])]
     stop_time(gcn_instance, "allocate tensors", start, barrier=False)
     
@@ -89,6 +91,9 @@ def broad_func_oned(gcn_instance, graph, ampbyp, inputs):
     for i in range(gcn_instance["size"]):
         row_data_send[i] = inputs[row_indices_recv[i].long(), :]
     stop_time(gcn_instance, "gather_row_data", start, barrier=False)
+
+    # print("rank {} send_split: {}".format(gcn_instance["rank"], [row_data_send[i].size(0) for i in range(gcn_instance["size"])]))
+    # print("rank {} recv_split: {}".format(gcn_instance["rank"], [row_data_recv[i].size(0) for i in range(gcn_instance["size"])]))
 
     start = time.time()
     dist.all_to_all(row_data_recv, row_data_send, group=gcn_instance["group"])
@@ -191,8 +196,8 @@ def load_npz_file(npz_path):
     # Load NPZ file
     loader = np.load(npz_path)
     data = loader['data'].astype(np.float64)  # Convert to fp64
-    rowptr = loader['rowptr']
-    col = loader['col']
+    rowptr = loader['rowptr'].astype(np.int32)  # Convert to int32
+    col = loader['col'].astype(np.int32)  # Convert to int32
     shape = tuple(loader['shape'])
     
     print(f"Loaded CSR matrix: shape={shape}, nnz={len(data)}")
@@ -203,8 +208,8 @@ def load_npz_file(npz_path):
     
     # Create edge_index tensor (COO format: [row_indices, col_indices])
     edge_index = torch.stack([
-        torch.from_numpy(coo_matrix.row.astype(np.int64)), 
-        torch.from_numpy(coo_matrix.col.astype(np.int64))
+        torch.from_numpy(coo_matrix.row.astype(np.int32)), 
+        torch.from_numpy(coo_matrix.col.astype(np.int32))
     ], dim=0)
     
     print(f"Graph loaded: {shape[0]} nodes, {coo_matrix.nnz} edges")
@@ -236,8 +241,8 @@ def setup_distributed():
     
     # Initialize distributed training
     backend = "nccl"
-    dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
-    
+    dist.init_process_group(backend=backend, init_method="env://", rank=rank, world_size=world_size)
+
     # Print backend information
     if rank == 0:
         print(f"Distributed Backend: {backend}")
