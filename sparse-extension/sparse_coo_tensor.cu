@@ -195,7 +195,7 @@ void spmm_gpu(const at::Tensor& A_rowindices,
                                                 &beta,                              // beta
                                                 matC,                               // matC
                                                 CUDA_R_64F,                         // computeType
-                                                CUSPARSE_SPMM_ALG_DEFAULT,          // alg
+                                                CUSPARSE_SPMM_CSR_ALG1,          // alg
                                                 &bufferSize));                      // bufferSize
 
 
@@ -211,7 +211,7 @@ void spmm_gpu(const at::Tensor& A_rowindices,
                                     &beta,                              // beta
                                     matC,                               // matC
                                     CUDA_R_64F,                         // computeType
-                                    CUSPARSE_SPMM_ALG_DEFAULT,          // alg
+                                    CUSPARSE_SPMM_CSR_ALG1,          // alg
                                     d_buffer));                         // buffer
 
 
