@@ -405,17 +405,36 @@ def benchmark_broad_func_one5d(args):
     # Clear timings after warmup
     gcn_instance["timings"].clear()
     
-    # Benchmark runs
-    start_time = time.time()
+    # Benchmark runs - collect per-run timing
+    run_times = []
     
     for epoch in range(1, args.num_runs + 1):
         gcn_instance["epoch"] = epoch
+        # GPU sync before timing
+        torch.cuda.synchronize()
+        start_time = time.time()
         result = broad_func_one5d(gcn_instance, adj_matrix_loc, ampbyp, inputs_loc)
         if args.distributed:
             dist.barrier()
-    
-    total_time = time.time() - start_time
+        # GPU sync after computation
+        torch.cuda.synchronize()
+        run_time = time.time() - start_time
+        run_times.append(run_time)
+        
+    total_time = sum(run_times)
     avg_time = total_time / args.num_runs
+    
+    # Print per-run timing information from rank 0
+    if args.distributed and rank == 0:
+        print(f"\n=== Per-Run Timing Information ===")
+        for i, run_time in enumerate(run_times, 1):
+            print(f"Run {i:2d}: {run_time:.4f}s")
+        print(f"Total: {total_time:.4f}s, Average: {avg_time:.4f}s")
+    elif not args.distributed:
+        print(f"\n=== Per-Run Timing Information ===")
+        for i, run_time in enumerate(run_times, 1):
+            print(f"Run {i:2d}: {run_time:.4f}s")
+        print(f"Total: {total_time:.4f}s, Average: {avg_time:.4f}s")
     
     print(f"Results for rank {rank}:")
     print(f"Total time for {args.num_runs} runs: {total_time:.4f}s")
