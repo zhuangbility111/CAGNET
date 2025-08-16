@@ -54,15 +54,15 @@ def broad_func_oned(gcn_instance, graph, ampbyp, inputs):
         # this is the old function
         n_per_proc = math.ceil(float(graph.size(0) / gcn_instance["size"]))
 
-        z_loc = torch.cuda.DoubleTensor(ampbyp[0].size(0), inputs.size(1), device=gcn_instance["device"]).fill_(0)
+        z_loc = torch.cuda.FloatTensor(ampbyp[0].size(0), inputs.size(1), device=gcn_instance["device"]).fill_(0)
         
-        inputs_recv = torch.cuda.DoubleTensor(n_per_proc, inputs.size(1), device=gcn_instance["device"]).fill_(0)
+        inputs_recv = torch.cuda.FloatTensor(n_per_proc, inputs.size(1), device=gcn_instance["device"]).fill_(0)
 
         for i in range(gcn_instance["size"]):
             if i == gcn_instance["rank"]:
                 inputs_recv = inputs.clone()
             elif i == gcn_instance["size"] - 1:
-                inputs_recv = torch.cuda.DoubleTensor(ampbyp[i].size(1), \
+                inputs_recv = torch.cuda.FloatTensor(ampbyp[i].size(1), \
                                                             inputs.size(1), \
                                                             device=gcn_instance["device"]).fill_(0)
             start = time.time()
@@ -77,14 +77,14 @@ def broad_func_oned(gcn_instance, graph, ampbyp, inputs):
         return z_loc
     
     start = time.time()
-    z_loc = torch.cuda.DoubleTensor(ampbyp[0].size(0), inputs.size(1), device=gcn_instance["device"]).fill_(0)
+    z_loc = torch.cuda.FloatTensor(ampbyp[0].size(0), inputs.size(1), device=gcn_instance["device"]).fill_(0)
     
     row_indices_send = gcn_instance["row_indices_send"]
     # row_indices_send[gcn_instance["rank"]] = torch.cuda.LongTensor(0, device=gcn_instance["device"]).fill_(0)
-    row_data_send = [torch.cuda.DoubleTensor(device=gcn_instance["device"])]*gcn_instance["size"]
+    row_data_send = [torch.cuda.FloatTensor(device=gcn_instance["device"])]*gcn_instance["size"]
     row_indices_recv = gcn_instance["row_indices_recv"]
     # row_indices_recv[gcn_instance["rank"]] = torch.cuda.LongTensor(0, device=gcn_instance["device"]).fill_(0)
-    row_data_recv = [torch.cuda.DoubleTensor(device=gcn_instance["device"]).resize_(row_indices_send[i].size(0), inputs.size(1)).fill_(0) for i in range(gcn_instance["size"])]
+    row_data_recv = [torch.cuda.FloatTensor(device=gcn_instance["device"]).resize_(row_indices_send[i].size(0), inputs.size(1)).fill_(0) for i in range(gcn_instance["size"])]
     stop_time(gcn_instance, "allocate tensors", start, barrier=False)
     
     start = time.time()
@@ -101,7 +101,7 @@ def broad_func_oned(gcn_instance, graph, ampbyp, inputs):
 
     start = time.time()
     for i in range(gcn_instance["size"]):
-       inputs_mul = torch.cuda.DoubleTensor(device=gcn_instance["device"]).resize_(ampbyp[i].size(1), inputs.size(1)).fill_(0)
+       inputs_mul = torch.cuda.FloatTensor(device=gcn_instance["device"]).resize_(ampbyp[i].size(1), inputs.size(1)).fill_(0)
        inputs_mul[row_indices_send[i]] = row_data_recv[i]
        spmm_gpu(ampbyp[i].indices()[0].int(), ampbyp[i].indices()[1].int(),
                         ampbyp[i].values(), ampbyp[i].size(0),
@@ -161,12 +161,12 @@ def oned_partition(rank, size, inputs, adj_matrix, data, features, classes, devi
         for i in range(len(am_pbyp)):
             if i == size - 1:
                 last_node_count = vtx_indices[i + 1] - vtx_indices[i]
-                am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float64), 
+                am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float32), 
                                                         size=(last_node_count, proc_node_count),
                                                         requires_grad=False)
                 # scale_elements removed
             else:
-                am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float64), 
+                am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float32), 
                                                         size=(vtx_indices[i + 1] - vtx_indices[i], proc_node_count),
                                                         requires_grad=False)
                 # scale_elements removed
@@ -175,7 +175,7 @@ def oned_partition(rank, size, inputs, adj_matrix, data, features, classes, devi
         for i in range(len(am_partitions)):
             proc_node_count = vtx_indices[i + 1] - vtx_indices[i]
             am_partitions[i] = torch.sparse_coo_tensor(am_partitions[i], 
-                                                    torch.ones(am_partitions[i].size(1), dtype=torch.float64), 
+                                                    torch.ones(am_partitions[i].size(1), dtype=torch.float32), 
                                                     size=(node_count, proc_node_count), 
                                                     requires_grad=False)
             # scale_elements removed
@@ -190,12 +190,12 @@ def oned_partition(rank, size, inputs, adj_matrix, data, features, classes, devi
     return inputs_loc, adj_matrix_loc, am_pbyp
 
 def load_npz_file(npz_path):
-    """Load NPZ sparse matrix file and convert to COO format with fp64 precision"""
+    """Load NPZ sparse matrix file and convert to COO format with fp32 precision"""
     print(f"Loading sparse matrix from {npz_path}")
     
     # Load NPZ file
     loader = np.load(npz_path)
-    data = loader['data'].astype(np.float64)  # Convert to fp64
+    data = loader['data'].astype(np.float32)  # Convert to fp32
     rowptr = loader['rowptr'].astype(np.int32)  # Convert to int32
     col = loader['col'].astype(np.int32)  # Convert to int32
     shape = tuple(loader['shape'])
@@ -263,7 +263,7 @@ def compute_full_reference_spmm(edge_index, num_nodes, inputs, device):
     # Create adjacency matrix from edge_index
     adj_matrix = torch.sparse_coo_tensor(
         edge_index, 
-        torch.ones(edge_index.size(1), dtype=torch.float64),
+        torch.ones(edge_index.size(1), dtype=torch.float32),
         size=(num_nodes, num_nodes),
         device=device
     ).coalesce()
@@ -370,11 +370,11 @@ def benchmark_broad_func_oned(args):
     #     edges = torch.randint(0, num_nodes, (2, num_edges))
     #     edge_index = edges
     
-    # Create input features with fp64 precision
+    # Create input features with fp32 precision
     num_features = args.num_features
     torch.manual_seed(1)
-    inputs = torch.randn(num_nodes, num_features, dtype=torch.float64)
-    # inputs = torch.ones(num_nodes, num_features, dtype=torch.float64)
+    inputs = torch.randn(num_nodes, num_features, dtype=torch.float32)
+    # inputs = torch.ones(num_nodes, num_features, dtype=torch.float32)
     
     print(f"Input features shape: {inputs.shape}")
     
@@ -564,7 +564,7 @@ def main():
     print(f"  Mode: {'Sparse-unaware' if args.sparse_unaware else 'Sparse-aware'}")
     print(f"  Runs: {args.num_runs}, Warmup: {args.warmup}")
     print(f"  Verify result: {args.verify_result}")
-    print(f"  Data precision: fp64")
+    print(f"  Data precision: fp32")
     
     benchmark_broad_func_oned(args)
 

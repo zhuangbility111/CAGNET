@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Performance benchmarking script for broad_func_one5d function.
-This script extracts and tes    if len(row_data_send) == 0: # not q for either stage
-        row_data_send = [torch.cuda.DoubleTensor(device=gcn_instance["device"])]*len(col_procs) the broad_func_one5d function from the CAGNET project.
+This script extracts and tests the broad_func_one5d function from the CAGNET project.
 """
 
 import argparse
@@ -40,9 +39,9 @@ def broad_func_one5d(gcn_instance, graph, ampbyp, inputs):
         # print("in su code", flush=True)
         n_per_proc = math.ceil(float(gcn_instance["node_count"]) / (gcn_instance["size"] / gcn_instance["replication"]))
 
-        z_loc = torch.cuda.DoubleTensor(ampbyp[0].size(0), inputs.size(1), device=gcn_instance["device"]).fill_(0)
+        z_loc = torch.cuda.FloatTensor(ampbyp[0].size(0), inputs.size(1), device=gcn_instance["device"]).fill_(0)
 
-        inputs_recv = torch.cuda.DoubleTensor(n_per_proc, inputs.size(1), device=gcn_instance["device"]).fill_(0)
+        inputs_recv = torch.cuda.FloatTensor(n_per_proc, inputs.size(1), device=gcn_instance["device"]).fill_(0)
 
         rank_c = gcn_instance["rank"] // gcn_instance["replication"]
         rank_col = gcn_instance["rank"] % gcn_instance["replication"]
@@ -62,7 +61,7 @@ def broad_func_one5d(gcn_instance, graph, ampbyp, inputs):
             if q == gcn_instance["rank"]:
                 inputs_recv = inputs.clone()
             elif q_c == gcn_instance["size"] // gcn_instance["replication"] - 1:
-                inputs_recv = torch.cuda.DoubleTensor(ampbyp[am_partid].size(1), \
+                inputs_recv = torch.cuda.FloatTensor(ampbyp[am_partid].size(1), \
                                                         inputs.size(1), \
                                                         device=gcn_instance["device"]).fill_(0)
 
@@ -85,7 +84,7 @@ def broad_func_one5d(gcn_instance, graph, ampbyp, inputs):
     """ 1.5d sparse-aware implementation (a2a version) """
     # print("in sa code", flush=True)
     
-    z_loc = torch.cuda.DoubleTensor(ampbyp[0].size(0), inputs.size(1), device=gcn_instance["device"]).fill_(0)
+    z_loc = torch.cuda.FloatTensor(ampbyp[0].size(0), inputs.size(1), device=gcn_instance["device"]).fill_(0)
     rank = gcn_instance["rank"]
     rank_c = gcn_instance["rank"] // gcn_instance["replication"]
     rank_col = gcn_instance["rank"] % gcn_instance["replication"]
@@ -98,7 +97,7 @@ def broad_func_one5d(gcn_instance, graph, ampbyp, inputs):
 
     row_data_send = []
     row_indices_recv = gcn_instance["row_indices_recv"]
-    row_data_recv = [torch.cuda.DoubleTensor(device=gcn_instance["device"])]*len(col_procs)
+    row_data_recv = [torch.cuda.FloatTensor(device=gcn_instance["device"])]*len(col_procs)
     row_indices_send = gcn_instance["row_indices_send"]
     
     start = time.time()
@@ -113,12 +112,12 @@ def broad_func_one5d(gcn_instance, graph, ampbyp, inputs):
                     rows_send = inputs[row_indices_recv[j].long(), :].clone()
                     row_data_send.append(rows_send)
                 else:
-                    row_data_send.append(torch.cuda.DoubleTensor(device=gcn_instance["device"]))
+                    row_data_send.append(torch.cuda.FloatTensor(device=gcn_instance["device"]))
         else: # receiving data from q
-            row_data_recv[q_c] = torch.cuda.DoubleTensor(device=gcn_instance["device"]).resize_((unique_cols.size(0), inputs.size(1))).fill_(0)
+            row_data_recv[q_c] = torch.cuda.FloatTensor(device=gcn_instance["device"]).resize_((unique_cols.size(0), inputs.size(1))).fill_(0)
 
     if len(row_data_send) == 0: # not q for either stage
-        row_data_send = [torch.cuda.DoubleTensor(device=gcn_instance["device"])]*len(col_procs) 
+        row_data_send = [torch.cuda.FloatTensor(device=gcn_instance["device"])]*len(col_procs) 
     stop_time(gcn_instance, "gather_row_data", start, barrier=False)
 
     start = time.time()
@@ -128,7 +127,7 @@ def broad_func_one5d(gcn_instance, graph, ampbyp, inputs):
     start = time.time()
     for i in range(len(col_procs)):
         if row_data_recv[i].size()[0] != 0:
-            inputs_mul = torch.cuda.DoubleTensor(device=gcn_instance["device"]).resize_(ampbyp[i].size(1), inputs.size(1)).fill_(0)
+            inputs_mul = torch.cuda.FloatTensor(device=gcn_instance["device"]).resize_(ampbyp[i].size(1), inputs.size(1)).fill_(0)
             inputs_mul[row_indices_send[col_procs[i]]] = row_data_recv[i]
 
             spmm_gpu(ampbyp[i].indices()[0].int(), ampbyp[i].indices()[1].int(),
@@ -204,12 +203,12 @@ def one5d_partition(rank, size, inputs, adj_matrix, data, features, classes, rep
         for i in range(len(am_pbyp)):
             if i == size // replication - 1:
                 last_node_count = vtx_indices[i + 1] - vtx_indices[i]
-                am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float64), 
+                am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float32), 
                                                         size=(last_node_count, proc_node_count),
                                                         requires_grad=False)
                 # scale_elements removed
             else:
-                am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float64), 
+                am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float32), 
                                                         size=(vtx_indices[i + 1] - vtx_indices[i], proc_node_count),
                                                         requires_grad=False)
                 # scale_elements removed
@@ -219,7 +218,7 @@ def one5d_partition(rank, size, inputs, adj_matrix, data, features, classes, rep
         for i in range(len(am_partitions)):
             proc_node_count = vtx_indices[i + 1] - vtx_indices[i]
             am_partitions[i] = torch.sparse_coo_tensor(am_partitions[i], 
-                                                    torch.ones(am_partitions[i].size(1), dtype=torch.float64), 
+                                                    torch.ones(am_partitions[i].size(1), dtype=torch.float32), 
                                                     size=(node_count, proc_node_count), 
                                                     requires_grad=False)
             # scale_elements removed
@@ -251,13 +250,13 @@ def split_am_partition(am_partition, partitions, rank, size, replication):
     for i in range(len(am_pbyp)):
         if i == size // replication - 1:
             last_node_count = vtx_indices[i + 1] - vtx_indices[i]
-            am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float64), 
+            am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float32), 
                                                     size=(last_node_count, proc_node_count),
                                                     requires_grad=False)
             # scale_elements removed
         else:
             proc_node_count_row = vtx_indices[i + 1] - vtx_indices[i]
-            am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float64), 
+            am_pbyp[i] = torch.sparse_coo_tensor(am_pbyp[i], torch.ones(am_pbyp[i].size(1), dtype=torch.float32), 
                                                     size=(proc_node_count_row, proc_node_count),
                                                     requires_grad=False)
             # scale_elements removed
@@ -316,11 +315,11 @@ def benchmark_broad_func_one5d(args):
         edges = torch.randint(0, num_nodes, (2, num_edges))
         edge_index = edges
     
-    # Create input features with fp64 precision
+    # Create input features with fp32 precision
     num_features = args.num_features
     torch.manual_seed(1233)
-    inputs = torch.randn(num_nodes, num_features, dtype=torch.float64)
-    # inputs = torch.ones(num_nodes, num_features, dtype=torch.float64)
+    inputs = torch.randn(num_nodes, num_features, dtype=torch.float32)
+    # inputs = torch.ones(num_nodes, num_features, dtype=torch.float32)
     
     print(f"Input features shape: {inputs.shape}")
     
@@ -519,7 +518,7 @@ def main():
     print(f"  Mode: {'Sparse-unaware' if args.sparse_unaware else 'Sparse-aware'}")
     print(f"  Runs: {args.num_runs}, Warmup: {args.warmup}")
     print(f"  Verify result: {args.verify_result}")
-    print(f"  Data precision: fp64")
+    print(f"  Data precision: fp32")
     
     benchmark_broad_func_one5d(args)
 
